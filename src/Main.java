@@ -10,6 +10,7 @@ public class Main {
 		
 		Library lib =new Library();
 		Manager manager =new Manager();
+		
 		new SystemMain(sc,lib,manager).print();
 	}
 }

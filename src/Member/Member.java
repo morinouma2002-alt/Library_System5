@@ -7,8 +7,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Scanner;
 
+import Exception.LibraryException;
 import Library.Book;
 import Library.Library;
+import Manager.Manager;
 
 public abstract class Member {
 
@@ -16,11 +18,15 @@ public abstract class Member {
 	private int id;
 	protected Scanner sc;
 	private Library library;
-
+	
+	//これは　、localdateで　日付を管理していきたい、リストを回すと長くなる可能性がある
+	private boolean cuponUsed=true; //1日経つとcuponをつかったら、再び使えるようになる
+	
 	// ★★★借りた本（先生も生徒も共通）
 	private List<Book> bookList = new ArrayList<>();
-	
-	private MemberStatus status =MemberStatus.NORMAL;
+
+	protected MemberStatus status = MemberStatus.NORMAL;
+	protected MemberRank rank = MemberRank.NORMAL;
 
 	public Member(String name, int id, Scanner sc, Library library) {
 		this.name = name;
@@ -29,16 +35,28 @@ public abstract class Member {
 		this.library = library;
 	}
 
+	public MemberStatus getStatus() {
+		return status;
+	}
+
+	public MemberRank getRank() {
+		return rank;
+	}
+
 	public String getName() {
 		return name;
 	}
 
-	public int id() {
+	public int getId() {
 		return id;
 	}
 
 	public List<Book> getBookList() {
 		return Collections.unmodifiableList(bookList);
+	}
+	
+	protected void consumeCupon() {
+		cuponUsed=false;
 	}
 
 	//子クラスが決める
@@ -46,12 +64,15 @@ public abstract class Member {
 	protected abstract int getMaxBooks();
 
 	protected abstract String getCallName();
+	
+	//cal()にthrowsをつけて、例外を上に流す
+	protected abstract void cal(Manager manager,boolean cuponUsed) throws LibraryException;
 
 	//borrow()は共通のふるまい
-	public void borrow() {
-		
+	public void borrow() throws LibraryException {
+
 		updateStatus();
-		if(status==MemberStatus.OVERDUE) {
+		if (status == MemberStatus.OVERDUE) {
 			System.out.println("延滞中の本があるので借りられない");
 			return;
 		}
@@ -61,6 +82,8 @@ public abstract class Member {
 			System.out.println("もう、借りられない");
 			return;
 		}
+
+		System.out.println(getMaxBooks() + "冊借りると GOLD会員になります");
 
 		System.out.println(getCallName() + ",何を借りますか?");
 		System.out.println("借りられるのは、" + getMaxBooks() + "冊まで");
@@ -76,12 +99,18 @@ public abstract class Member {
 			}
 		}
 
-		while (!sc.hasNextInt()) {
-			System.out.println("数値を入力してください");
+		int index = 0;
+		if (!sc.hasNextInt()) {
 			sc.next();
-		}
+			throw new LibraryException("数値を入力してください");
+		} else if (sc.hasNextInt()) {
+			index = sc.nextInt();
+			
+			if (index < 100 || index > 114) {
+				throw new LibraryException("範囲で入力してください");
+			}
 
-		int index = sc.nextInt();
+		}
 
 		for (Book book : libraryBooks) {
 			if (book.getId() == index) {
@@ -92,11 +121,17 @@ public abstract class Member {
 				}
 
 				System.out.println(book.getName() + "を借りました");
-				
+
 				book.setBorrowed(library.getToday());
-				
+
 				bookList.add(book);//本を貯める
 				System.out.println(book.getDueDate() + "を借りました");
+
+				if (bookList.size() == getMaxBooks()) {
+					System.out.println("ゴールド会員になりました");
+
+					rank = MemberRank.GOLD;
+				}
 
 				return;
 			}
@@ -108,7 +143,7 @@ public abstract class Member {
 	}
 
 	//returnも共通のふるまい
-	public void returnBook() {
+	public void returnBook(Manager manager) throws LibraryException{
 
 		if (bookList.isEmpty()) {
 			System.out.println("借りている、本はありません");
@@ -119,6 +154,7 @@ public abstract class Member {
 		System.out.println("IDを入力してください");
 		for (Book book : bookList) {
 			System.out.println(book.getId() + ":" + book.getName());
+	
 		}
 
 		int indexId;
@@ -141,41 +177,57 @@ public abstract class Member {
 			}
 		}
 		
-		System.out.println(returnBook.getName()+"を返却します");
-		
-		LocalDate today = library.getToday();                          // 今日
-		if (returnBook.getDueDate().isBefore(today)) {              // 期限が今日より前＝延滞
-		    long late = ChronoUnit.DAYS.between(returnBook.getDueDate(), today);   // 何日遅れか
-		    System.out.println(late + "日遅れています");
+		if(returnBook ==null) {
+			throw new LibraryException("そのIDの本は借りていません");
 		}
 
-		returnBook.setReturn();   // 判定のあとに呼ぶ（先に呼ぶと期限がnullになる）
+		System.out.println(returnBook.getName() + "を返却します");
+
+		LocalDate today = library.getToday(); // 今日
+		if (returnBook.getDueDate().isBefore(today)) { // 期限が今日より前＝延滞
+			long late = ChronoUnit.DAYS.between(returnBook.getDueDate(), today); // 何日遅れか
+			System.out.println(late + "日遅れています");
+		}
+
+		try {
+			cal(manager,cuponUsed);
+		} catch(LibraryException e) {
+			System.out.println(e.getMessage());
+			return;//★★　これがないと、下のsetReturn()やremove()まで進んでしまう
+		}
 		
-		//抽象メソッドにしなくても、返却はただ減らすだけなので、removeする
+
+		returnBook.setReturn(); // 判定のあとに呼ぶ（先に呼ぶと期限がnullになる）
+
+		MemberStatus before = status; // 返却前の状態
 		bookList.remove(returnBook);
-		
-		//延滞客で、本を全部返したら通常客に戻る
-		if(status==MemberStatus.OVERDUE&&bookList.isEmpty()) {
-			status=MemberStatus.NORMAL;
+		updateStatus();
+		if (before == MemberStatus.OVERDUE && status == MemberStatus.NORMAL) {
 			System.out.println("通常客にもどれました");
 		}
 	}
-	
+
 	//借りている本を１冊ずつ見て、期限切れが一冊でもあれば延滞客にする
 	public void updateStatus() {
-		status =MemberStatus.NORMAL;
-		
-		for(Book book:bookList) {
-			
+		status = MemberStatus.NORMAL;
+
+		for (Book book : bookList) {
+
 			//期限が今日より前の本が一冊でもあれば延滞客
-			if(book.getDueDate().isBefore(library.getToday())) {
-				status =MemberStatus.OVERDUE;
+			if (book.getDueDate().isBefore(library.getToday())) {
+				status = MemberStatus.OVERDUE;
 			}
 		}
 	}
-	
+
 	public void search() {
 		library.memberSearch(sc);
+	}
+
+	public void display() {
+		for (Book book : bookList) {
+			System.out.println(book.getId() + ":" + book.getName());
+		}
 	}
 
 }
